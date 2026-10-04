@@ -2,8 +2,9 @@ mod core;
 mod libs;
 
 use core::server::start_server;
-use libs::config::Config;
-use libs::{db, session};
+use libs::config::{Config, Storage};
+use libs::db::{self, Database};
+use libs::session::{self, SessionStore};
 
 pub const APP_NAME: &str = "OauthRS";
 pub const APP_ENV: &str = "dev";
@@ -15,12 +16,26 @@ async fn main() {
 
     tracing::info!("Starting {} in {} mode", APP_NAME, APP_ENV);
 
-    let config     = Config::load();
-    let db_pool    = db::connect(&config.database_url).await;
-    let redis      = session::connect(&config.redis_url);
+    let config = Config::load();
 
-    db::run_migrations(&db_pool).await;
+    let (database, sessions) = match &config.storage {
+        Storage::Postgres { database_url, redis_url } => {
+            tracing::info!("Storage: PostgreSQL + Redis");
+            let db_pool = db::connect(database_url).await;
+            let redis   = session::connect(redis_url);
+            (Database::Postgres(db_pool), SessionStore::Redis(redis))
+        }
+        Storage::Sqlite { path } => {
+            tracing::info!("Storage: SQLite standalone ({})", path);
+            let pool = db::connect_sqlite(path).await;
+            (Database::Sqlite(pool.clone()), SessionStore::Sqlite(pool))
+        }
+    };
+
+    database.run_migrations().await;
     tracing::info!("Migrations applied");
 
-    start_server(config, db_pool, redis).await;
+    session::spawn_purge_task(&sessions);
+
+    start_server(config, database, sessions).await;
 }

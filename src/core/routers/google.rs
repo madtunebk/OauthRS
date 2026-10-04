@@ -49,7 +49,7 @@ pub async fn initiate(State(state): State<AppState>) -> impl IntoResponse {
         .collect();
 
     let key = format!("oauth_state:{}", oauth_state);
-    let _ = session::set(&state.redis, &key, "1", STATE_TTL).await;
+    let _ = session::set(&state.sessions, &key, "1", STATE_TTL).await;
 
     let url = format!(
         "{}?client_id={}&redirect_uri={}&response_type=code&scope=email+profile&state={}",
@@ -77,11 +77,11 @@ pub async fn callback(
 
     // Verify state (CSRF)
     let state_key = format!("oauth_state:{}", oauth_state);
-    let valid = session::get(&state.redis, &state_key).await.unwrap_or(None);
+    let valid = session::get(&state.sessions, &state_key).await.unwrap_or(None);
     if valid.is_none() {
         return Redirect::to("/login").into_response();
     }
-    let _ = session::del(&state.redis, &state_key).await;
+    let _ = session::del(&state.sessions, &state_key).await;
 
     // Exchange code for access token
     let client = reqwest::Client::new();
@@ -129,7 +129,7 @@ pub async fn callback(
     // Create session
     let token = jwt::sign(user_id, &state.config.jwt_secret, state.config.jwt_expiry_secs);
     let _ = session::set(
-        &state.redis,
+        &state.sessions,
         &format!("session:{}", user_id),
         &token,
         state.config.jwt_expiry_secs,
@@ -138,10 +138,7 @@ pub async fn callback(
     axum::response::Response::builder()
         .status(302)
         .header("Location", "/")
-        .header(
-            "Set-Cookie",
-            format!("session={}; Path=/; HttpOnly; SameSite=Lax", token),
-        )
+        .header("Set-Cookie", session::session_cookie(&token, state.config.cookie_secure))
         .body(axum::body::Body::empty())
         .unwrap()
         .into_response()
@@ -149,29 +146,20 @@ pub async fn callback(
 
 async fn find_or_create_user(state: &AppState, info: &GoogleUserInfo) -> Result<Uuid, StatusCode> {
     // Try find by google_id
-    let existing: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM users WHERE google_id = $1 AND deleted_at IS NULL AND disabled_at IS NULL"
-    )
-    .bind(&info.id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let existing = state.db.find_active_by_google_id(&info.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if let Some((id,)) = existing {
+    if let Some(id) = existing {
         return Ok(id);
     }
 
     // Try find by email — link google_id to existing account
-    let by_email: Option<(Uuid,)> = sqlx::query_as(
-        "UPDATE users SET google_id = $1 WHERE email = $2 AND deleted_at IS NULL AND disabled_at IS NULL RETURNING id"
-    )
-    .bind(&info.id)
-    .bind(&info.email)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let by_email = state.db.link_google_by_email(&info.id, &info.email)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if let Some((id,)) = by_email {
+    if let Some(id) = by_email {
         return Ok(id);
     }
 
@@ -193,15 +181,9 @@ async fn find_or_create_user(state: &AppState, info: &GoogleUserInfo) -> Result<
 
     let username = make_unique_username(state, &base).await?;
 
-    let (id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO users (email, username, google_id) VALUES ($1, $2, $3) RETURNING id"
-    )
-    .bind(&info.email)
-    .bind(&username)
-    .bind(&info.id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let id = state.db.create_google_user(&info.email, &username, &info.id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(id)
 }
@@ -210,29 +192,21 @@ async fn make_unique_username(state: &AppState, base: &str) -> Result<String, St
     let base = if base.is_empty() { "user" } else { base };
 
     // Try base first, then base2, base3, ...
-    let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT username FROM users WHERE username = $1"
-    )
-    .bind(base)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let existing = state.db.username_exists(base)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if existing.is_none() {
+    if !existing {
         return Ok(base.to_string());
     }
 
     for i in 2..=99 {
         let candidate = format!("{}{}", base, i);
-        let taken: Option<(String,)> = sqlx::query_as(
-            "SELECT username FROM users WHERE username = $1"
-        )
-        .bind(&candidate)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let taken = state.db.username_exists(&candidate)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-        if taken.is_none() {
+        if !taken {
             return Ok(candidate);
         }
     }

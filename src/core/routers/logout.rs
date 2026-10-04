@@ -8,6 +8,6 @@ pub async fn handle(
     State(state): State<AppState>,
     auth: AuthSession,
 ) -> StatusCode {
-    let _ = session::del(&state.redis, &format!("session:{}", auth.user_id)).await;
+    let _ = session::del(&state.sessions, &format!("session:{}", auth.user_id)).await;
     StatusCode::OK
 }

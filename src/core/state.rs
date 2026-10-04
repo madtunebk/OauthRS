@@ -1,11 +1,10 @@
-use sqlx::PgPool;
-use redis::Client;
-
 use crate::libs::config::Config;
+use crate::libs::db::Database;
+use crate::libs::session::SessionStore;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db:     PgPool,
-    pub redis:  Client,
-    pub config: Config,
+    pub db:       Database,
+    pub sessions: SessionStore,
+    pub config:   Config,
 }

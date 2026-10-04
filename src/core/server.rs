@@ -1,15 +1,15 @@
 use axum::{Router, middleware as axum_middleware, routing::{get, post}};
 use tokio::net::TcpListener;
-use sqlx::PgPool;
-use redis::Client;
 
 use super::routers::{auth, home, login, logout, signup, invite, oauth, google};
 use super::middleware::handle_errors;
 use super::state::AppState;
 use crate::libs::config::Config;
+use crate::libs::db::Database;
+use crate::libs::session::SessionStore;
 
-pub async fn start_server(config: Config, db: PgPool, redis: Client) {
-    let state = AppState { db, redis, config };
+pub async fn start_server(config: Config, db: Database, sessions: SessionStore) {
+    let state = AppState { db, sessions, config };
     let addr  = format!("{}:{}", state.config.host, state.config.port);
 
     let api_routes = Router::new()

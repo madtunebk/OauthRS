@@ -24,7 +24,7 @@ pub async fn handle(
     let code = Uuid::new_v4().to_string();
 
     session::set(
-        &state.redis,
+        &state.sessions,
         &format!("invite:{}", code),
         "1",
         state.config.invite_ttl_secs,

@@ -28,7 +28,7 @@ pub async fn handle(
     }
 
     let token = jwt::sign(user_id, &state.config.jwt_secret, state.config.jwt_expiry_secs);
-    session::set(&state.redis, &format!("session:{}", user_id), &token, state.config.jwt_expiry_secs)
+    session::set(&state.sessions, &format!("session:{}", user_id), &token, state.config.jwt_expiry_secs)
         .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(AuthResponse { token, token_type: "Bearer".to_string(), expires_in: state.config.jwt_expiry_secs }))
@@ -57,26 +57,20 @@ pub async fn handle_form(
     }
 
     let token = jwt::sign(user_id, &state.config.jwt_secret, state.config.jwt_expiry_secs);
-    let _ = session::set(&state.redis, &format!("session:{}", user_id), &token, state.config.jwt_expiry_secs).await;
+    let _ = session::set(&state.sessions, &format!("session:{}", user_id), &token, state.config.jwt_expiry_secs).await;
 
     // set session cookie and redirect back to home
     axum::response::Response::builder()
         .status(302)
         .header("Location", "/")
-        .header("Set-Cookie", format!("session={}; Path=/; HttpOnly; SameSite=Lax", token))
+        .header("Set-Cookie", session::session_cookie(&token, state.config.cookie_secure))
         .body(axum::body::Body::empty())
         .unwrap()
         .into_response()
 }
 
 async fn fetch_user(state: &AppState, login: &str) -> Result<(Uuid, String), StatusCode> {
-    sqlx::query_as(
-        "SELECT id, password_hash FROM users
-         WHERE (email = $1 OR username = $1)
-           AND deleted_at IS NULL AND disabled_at IS NULL"
-    )
-        .bind(login)
-        .fetch_optional(&state.db)
+    state.db.find_active_credentials(login)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)

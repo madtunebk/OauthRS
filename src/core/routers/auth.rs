@@ -18,7 +18,7 @@ pub async fn handle(State(state): State<AppState>, headers: HeaderMap) -> Status
     };
 
     let key = format!("session:{}", claims.sub);
-    let stored = match session::get(&state.redis, &key).await {
+    let stored = match session::get(&state.sessions, &key).await {
         Ok(v) => v,
         Err(_) => return StatusCode::UNAUTHORIZED,
     };

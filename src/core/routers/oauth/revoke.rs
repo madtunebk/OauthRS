@@ -21,7 +21,7 @@ pub async fn handle(
         Err(_) => return StatusCode::UNAUTHORIZED,
     };
 
-    let _ = session::del(&state.redis, &format!("session:{}", user_id)).await;
+    let _ = session::del(&state.sessions, &format!("session:{}", user_id)).await;
 
     StatusCode::OK
 }

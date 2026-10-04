@@ -26,7 +26,7 @@ pub async fn handle(
         .map_err(|e| e)?;
 
     let token = jwt::sign(user_id, &state.config.jwt_secret, state.config.jwt_expiry_secs);
-    session::set(&state.redis, &format!("session:{}", user_id), &token, state.config.jwt_expiry_secs)
+    session::set(&state.sessions, &format!("session:{}", user_id), &token, state.config.jwt_expiry_secs)
         .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(AuthResponse { token, token_type: "Bearer".to_string(), expires_in: state.config.jwt_expiry_secs }))
@@ -48,12 +48,12 @@ pub async fn handle_form(
     match create_user(&state, &body.email, &body.username, &body.password, &body.invite_code).await {
         Ok(user_id) => {
             let token = jwt::sign(user_id, &state.config.jwt_secret, state.config.jwt_expiry_secs);
-            let _ = session::set(&state.redis, &format!("session:{}", user_id), &token, state.config.jwt_expiry_secs).await;
+            let _ = session::set(&state.sessions, &format!("session:{}", user_id), &token, state.config.jwt_expiry_secs).await;
 
             axum::response::Response::builder()
                 .status(302)
                 .header("Location", "/")
-                .header("Set-Cookie", format!("session={}; Path=/; HttpOnly; SameSite=Lax", token))
+                .header("Set-Cookie", session::session_cookie(&token, state.config.cookie_secure))
                 .body(axum::body::Body::empty())
                 .unwrap()
                 .into_response()
@@ -67,33 +67,33 @@ pub async fn handle_form(
 async fn create_user(state: &AppState, email: &str, username: &str, password: &str, invite_code: &str) -> Result<Uuid, StatusCode> {
     let invite_key = format!("invite:{}", invite_code);
 
-    if state.config.invite_required {
-        let valid = session::get(&state.redis, &invite_key)
+    // Claim the invite atomically so concurrent signups cannot share one code
+    let invite = if state.config.invite_required {
+        let taken = session::take(&state.sessions, &invite_key)
             .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-        if valid.is_none() {
-            return Err(StatusCode::FORBIDDEN);
+        match taken {
+            Some(invite) => Some(invite),
+            None => return Err(StatusCode::FORBIDDEN),
         }
-    }
+    } else {
+        None
+    };
 
     let password_hash = password::hash(password);
 
-    let result = sqlx::query_as::<_, (Uuid,)>(
-        "INSERT INTO users (email, username, password_hash) VALUES ($1, $2, $3) RETURNING id",
-    )
-    .bind(email)
-    .bind(username)
-    .bind(&password_hash)
-    .fetch_one(&state.db)
-    .await;
+    let result = state.db.create_user(email, username, &password_hash).await;
+
+    if result.is_err() {
+        // Signup failed — give the invite back with its remaining TTL
+        if let Some((value, ttl)) = invite.filter(|(_, ttl)| *ttl > 0) {
+            let _ = session::set(&state.sessions, &invite_key, &value, ttl).await;
+        }
+    }
 
     match result {
-        Ok((user_id,)) => {
-            // Only consume the invite after a successful insert
-            let _ = session::del(&state.redis, &invite_key).await;
-            Ok(user_id)
-        }
-        Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("23505") => {
+        Ok(user_id) => Ok(user_id),
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
             Err(StatusCode::CONFLICT)
         }
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),

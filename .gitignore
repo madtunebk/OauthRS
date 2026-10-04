@@ -2,3 +2,6 @@
 add_details.txt
 CLAUDE.md
 target/
+*.db
+*.db-wal
+*.db-shm
