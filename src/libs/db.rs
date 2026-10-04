@@ -66,24 +66,24 @@ impl Database {
         }
     }
 
-    /// (id, password_hash) of any user, by email or username.
-    pub async fn find_credentials(&self, login: &str) -> Result<Option<(Uuid, String)>, sqlx::Error> {
-        match self {
+    /// Whether the user exists and is not deleted or disabled.
+    pub async fn is_active_user(&self, id: Uuid) -> Result<bool, sqlx::Error> {
+        let row: Option<(i32,)> = match self {
             Database::Postgres(pool) => sqlx::query_as(
-                "SELECT id, password_hash FROM users WHERE email = $1 OR username = $1",
+                "SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL AND disabled_at IS NULL"
             )
-            .bind(login)
+            .bind(id)
             .fetch_optional(pool)
-            .await,
+            .await?,
 
-            Database::Sqlite(pool) => sqlx::query_as::<_, (Hyphenated, String)>(
-                "SELECT id, password_hash FROM users WHERE email = ?1 OR username = ?1",
+            Database::Sqlite(pool) => sqlx::query_as(
+                "SELECT 1 FROM users WHERE id = ?1 AND deleted_at IS NULL AND disabled_at IS NULL"
             )
-            .bind(login)
+            .bind(id.hyphenated())
             .fetch_optional(pool)
-            .await
-            .map(|row| row.map(|(id, hash)| (id.into_uuid(), hash))),
-        }
+            .await?,
+        };
+        Ok(row.is_some())
     }
 
     pub async fn create_user(&self, email: &str, username: &str, password_hash: &str) -> Result<Uuid, sqlx::Error> {
@@ -250,7 +250,8 @@ mod tests {
         let id = db.create_user("a@x.dev", "alice", "hash").await.unwrap();
         assert_eq!(db.find_active_credentials("a@x.dev").await.unwrap(), Some((id, "hash".to_string())));
         assert_eq!(db.find_active_credentials("alice").await.unwrap(), Some((id, "hash".to_string())));
-        assert_eq!(db.find_credentials("alice").await.unwrap(), Some((id, "hash".to_string())));
+        assert!(db.is_active_user(id).await.unwrap());
+        assert!(!db.is_active_user(Uuid::new_v4()).await.unwrap());
         assert!(db.find_active_credentials("nobody").await.unwrap().is_none());
 
         // duplicates are reported as unique violations (signup maps these to 409)
@@ -281,7 +282,7 @@ mod tests {
             .unwrap();
         assert!(db.find_active_credentials("alice").await.unwrap().is_none());
         assert!(db.find_active_by_google_id("g1").await.unwrap().is_none());
-        assert!(db.find_credentials("alice").await.unwrap().is_some());
+        assert!(!db.is_active_user(id).await.unwrap());
 
         remove_temp_sqlite(pool, path).await;
     }

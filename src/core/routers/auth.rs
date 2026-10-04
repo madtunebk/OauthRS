@@ -7,26 +7,28 @@ use crate::libs::{jwt, session};
 // Returns 200 if the request carries a valid JWT (header or cookie)
 // Returns 401 if missing or invalid — nginx then redirects to /login
 pub async fn handle(State(state): State<AppState>, headers: HeaderMap) -> StatusCode {
-    let token = match extract_token(&headers) {
+    if has_active_session(&state, &headers).await {
+        StatusCode::OK
+    } else {
+        StatusCode::UNAUTHORIZED
+    }
+}
+
+/// True if the request carries a valid JWT that is still the user's active
+/// session (not logged out, revoked or replaced).
+pub async fn has_active_session(state: &AppState, headers: &HeaderMap) -> bool {
+    let token = match extract_token(headers) {
         Some(t) => t,
-        None => return StatusCode::UNAUTHORIZED,
+        None => return false,
     };
 
     let claims = match jwt::verify(&token, &state.config.jwt_secret) {
         Ok(c) => c,
-        Err(_) => return StatusCode::UNAUTHORIZED,
+        Err(_) => return false,
     };
 
     let key = format!("session:{}", claims.sub);
-    let stored = match session::get(&state.sessions, &key).await {
-        Ok(v) => v,
-        Err(_) => return StatusCode::UNAUTHORIZED,
-    };
-
-    match stored {
-        Some(s) if s == token => StatusCode::OK,
-        _ => StatusCode::UNAUTHORIZED,
-    }
+    matches!(session::get(&state.sessions, &key).await, Ok(Some(s)) if s == token)
 }
 
 fn extract_token(headers: &HeaderMap) -> Option<String> {

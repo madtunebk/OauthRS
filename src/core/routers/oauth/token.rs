@@ -17,7 +17,7 @@ pub async fn handle(
             let login    = body.login.ok_or(StatusCode::BAD_REQUEST)?;
             let password = body.password.ok_or(StatusCode::BAD_REQUEST)?;
 
-            let (user_id, password_hash) = state.db.find_credentials(&login)
+            let (user_id, password_hash) = state.db.find_active_credentials(&login)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::UNAUTHORIZED)?;
@@ -46,6 +46,15 @@ pub async fn handle(
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             if stored.as_deref() != Some(refresh_token.as_str()) {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+
+            // deleted or disabled users cannot extend their session
+            let active = state.db.is_active_user(user_id)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            if !active {
                 return Err(StatusCode::UNAUTHORIZED);
             }
 
