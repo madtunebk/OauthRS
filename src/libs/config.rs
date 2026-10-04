@@ -21,6 +21,7 @@ pub struct Config {
     pub invite_ttl_secs: u64,
     pub invite_required: bool,
     pub cookie_secure:   bool,
+    pub google_enabled:       bool,
     pub google_client_id:     String,
     pub google_client_secret: String,
     pub google_redirect_uri:  String,
@@ -28,6 +29,16 @@ pub struct Config {
 
 impl Config {
     pub fn load() -> Self {
+        let google_client_id     = env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
+        let google_client_secret = env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default();
+        let google_redirect_uri  = env::var("GOOGLE_REDIRECT_URI").unwrap_or_default();
+        let google_enabled = google_enabled(
+            env::var("GOOGLE_ENABLED").ok(),
+            &google_client_id,
+            &google_client_secret,
+            &google_redirect_uri,
+        );
+
         Config {
             storage:         Storage::load(),
             jwt_secret:      env::var("JWT_SECRET").expect("JWT_SECRET must be set"),
@@ -55,10 +66,29 @@ impl Config {
                 .trim()
                 .to_lowercase()
                 != "false",
-            google_client_id:     env::var("GOOGLE_CLIENT_ID").unwrap_or_default(),
-            google_client_secret: env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default(),
-            google_redirect_uri:  env::var("GOOGLE_REDIRECT_URI").unwrap_or_default(),
+            google_enabled,
+            google_client_id,
+            google_client_secret,
+            google_redirect_uri,
         }
+    }
+}
+
+/// Google login switch (`GOOGLE_ENABLED`). Unset: enabled when `GOOGLE_CLIENT_ID` is set.
+/// Explicitly enabled: the client ID, secret and redirect URI are all required.
+fn google_enabled(flag: Option<String>, client_id: &str, client_secret: &str, redirect_uri: &str) -> bool {
+    let flag = flag.map(|f| f.trim().to_lowercase()).filter(|f| !f.is_empty());
+
+    match flag.as_deref() {
+        None => !client_id.trim().is_empty(),
+        Some("false" | "off" | "0" | "no") => false,
+        Some("true" | "on" | "1" | "yes") => {
+            if [client_id, client_secret, redirect_uri].iter().any(|v| v.trim().is_empty()) {
+                panic!("GOOGLE_ENABLED is on: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI must be set");
+            }
+            true
+        }
+        Some(other) => panic!("GOOGLE_ENABLED must be 'on' or 'off', got '{}'", other),
     }
 }
 
@@ -119,6 +149,34 @@ mod tests {
             storage(&[("STORAGE_BACKEND", "PostgreSQL"), ("DATABASE_URL", "postgres://db"), ("REDIS_URL", "redis://r")]),
             postgres(),
         );
+    }
+
+    #[test]
+    fn test_google_enabled() {
+        let on = |f: Option<&str>, id: &str| google_enabled(f.map(String::from), id, "secret", "https://x/cb");
+
+        // unset: follows GOOGLE_CLIENT_ID (existing behaviour)
+        assert!(on(None, "client"));
+        assert!(!on(None, ""));
+        assert!(!on(Some(" "), ""));
+
+        // explicit switch
+        assert!(!on(Some("off"), "client"));
+        assert!(!on(Some("FALSE"), "client"));
+        assert!(on(Some("on"), "client"));
+        assert!(on(Some("true"), "client"));
+    }
+
+    #[test]
+    #[should_panic(expected = "GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI must be set")]
+    fn test_google_enabled_requires_credentials() {
+        google_enabled(Some("on".into()), "client", "", "https://x/cb");
+    }
+
+    #[test]
+    #[should_panic(expected = "GOOGLE_ENABLED must be 'on' or 'off'")]
+    fn test_google_enabled_invalid() {
+        google_enabled(Some("maybe".into()), "client", "secret", "https://x/cb");
     }
 
     #[test]

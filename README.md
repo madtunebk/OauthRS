@@ -5,7 +5,7 @@ A lightweight authentication microservice built with Rust and [Axum](https://git
 ## Features
 
 - Email/password login and signup (Argon2 password hashing)
-- Google OAuth 2.0 login
+- Google OAuth 2.0 login (optional, `GOOGLE_ENABLED=on/off`)
 - JWT session tokens stored in Redis (or SQLite in standalone mode)
 - Two storage modes: PostgreSQL + Redis, or a single-file SQLite standalone mode
 - Invite-only registration mode
@@ -80,6 +80,7 @@ Copy `.env.example` to `.env` and set:
 | `INVITE_REQUIRED` | no | `true` | Require invite code to register |
 | `INVITE_TTL_SECS` | no | `86400` | Invite link expiry |
 | `COOKIE_SECURE` | no | `true` | Add `Secure` to the session cookie; set `false` only for plain-HTTP development |
+| `GOOGLE_ENABLED` | no | auto | `on`/`off` switch for Google login; if unset, enabled when `GOOGLE_CLIENT_ID` is set. When off, the Google button is hidden and `/auth/google*` redirect to `/login` |
 | `GOOGLE_CLIENT_ID` | no | — | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | no | — | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | no | — | OAuth callback URL |

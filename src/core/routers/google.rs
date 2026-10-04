@@ -38,7 +38,7 @@ struct GoogleUserInfo {
 
 // GET /auth/google — redirect to Google consent screen
 pub async fn initiate(State(state): State<AppState>) -> impl IntoResponse {
-    if state.config.google_client_id.is_empty() {
+    if !state.config.google_enabled {
         return Redirect::to("/login").into_response();
     }
 
@@ -67,6 +67,10 @@ pub async fn callback(
     State(state): State<AppState>,
     Query(params): Query<CallbackParams>,
 ) -> impl IntoResponse {
+    if !state.config.google_enabled {
+        return Redirect::to("/login").into_response();
+    }
+
     // User denied or error
     if params.error.is_some() || params.code.is_none() {
         return Redirect::to("/login").into_response();

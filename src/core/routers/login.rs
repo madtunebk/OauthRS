@@ -12,8 +12,8 @@ use crate::core::state::AppState;
 use crate::libs::{jwt, models::{AuthResponse, LoginRequest}, password, session, templates};
 
 // GET /api/login — serve the login form
-pub async fn form() -> Html<String> {
-    Html(templates::render("login.tpl", &Context::new()))
+pub async fn form(State(state): State<AppState>) -> Html<String> {
+    Html(templates::render("login.tpl", &page_context(&state)))
 }
 
 // POST /api/login — JSON (API clients)
@@ -49,11 +49,11 @@ pub async fn handle_form(
 
     let (user_id, password_hash) = match result {
         Ok(u)  => u,
-        Err(_) => return render_error("Invalid email or password."),
+        Err(_) => return render_error(&state, "Invalid email or password."),
     };
 
     if !password::verify(&body.password, &password_hash) {
-        return render_error("Invalid email or password.");
+        return render_error(&state, "Invalid email or password.");
     }
 
     let token = jwt::sign(user_id, &state.config.jwt_secret, state.config.jwt_expiry_secs);
@@ -76,8 +76,14 @@ async fn fetch_user(state: &AppState, login: &str) -> Result<(Uuid, String), Sta
         .ok_or(StatusCode::UNAUTHORIZED)
 }
 
-fn render_error(msg: &str) -> Response {
-    let mut ctx = Context::new();
+fn render_error(state: &AppState, msg: &str) -> Response {
+    let mut ctx = page_context(state);
     ctx.insert("error", msg);
     Html(templates::render("login.tpl", &ctx)).into_response()
+}
+
+fn page_context(state: &AppState) -> Context {
+    let mut ctx = Context::new();
+    ctx.insert("google_enabled", &state.config.google_enabled);
+    ctx
 }

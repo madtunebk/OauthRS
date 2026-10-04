@@ -12,8 +12,8 @@ use crate::core::state::AppState;
 use crate::libs::{jwt, models::{AuthResponse, SignupRequest}, password, session, templates};
 
 // GET /api/signup — serve the signup form
-pub async fn form() -> Html<String> {
-    Html(templates::render("signup.tpl", &Context::new()))
+pub async fn form(State(state): State<AppState>) -> Html<String> {
+    Html(templates::render("signup.tpl", &page_context(&state)))
 }
 
 // POST /api/signup — JSON (API clients)
@@ -58,9 +58,9 @@ pub async fn handle_form(
                 .unwrap()
                 .into_response()
         }
-        Err(StatusCode::FORBIDDEN)  => render_error("Invalid or expired invite code."),
-        Err(StatusCode::CONFLICT)   => render_error("Email or username already taken."),
-        Err(_)                      => render_error("Something went wrong. Please try again."),
+        Err(StatusCode::FORBIDDEN)  => render_error(&state, "Invalid or expired invite code."),
+        Err(StatusCode::CONFLICT)   => render_error(&state, "Email or username already taken."),
+        Err(_)                      => render_error(&state, "Something went wrong. Please try again."),
     }
 }
 
@@ -100,8 +100,14 @@ async fn create_user(state: &AppState, email: &str, username: &str, password: &s
     }
 }
 
-fn render_error(msg: &str) -> Response {
-    let mut ctx = Context::new();
+fn render_error(state: &AppState, msg: &str) -> Response {
+    let mut ctx = page_context(state);
     ctx.insert("error", msg);
     Html(templates::render("signup.tpl", &ctx)).into_response()
+}
+
+fn page_context(state: &AppState) -> Context {
+    let mut ctx = Context::new();
+    ctx.insert("google_enabled", &state.config.google_enabled);
+    ctx
 }
