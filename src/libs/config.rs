@@ -93,7 +93,7 @@ fn google_enabled(flag: Option<String>, client_id: &str, client_secret: &str, re
 }
 
 impl Storage {
-    fn load() -> Self {
+    pub fn load() -> Self {
         Self::from_vars(|name| env::var(name).ok())
     }
 

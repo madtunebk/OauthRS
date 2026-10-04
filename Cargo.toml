@@ -26,3 +26,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest            = { version = "0.12", features = ["json"] }
 rand               = "0.8"
 urlencoding        = "2"
+rpassword          = "7"

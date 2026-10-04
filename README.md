@@ -62,6 +62,23 @@ JWT_SECRET=... ADMIN_SECRET=... cargo run
 
 The database file is created on first start and migrated from `migrations_sqlite/` (PostgreSQL uses `migrations/`). Expired session keys are ignored on read and purged every minute. SQLite runs in WAL mode, so keep the `-wal`/`-shm` files next to the database and run a single instance per file.
 
+## Creating users from the CLI
+
+```bash
+oauth-rs create-user --email user@example.com --username user
+# Password: ********
+# Confirm password: ********
+# Created user user (3f2a…)
+```
+
+The user is written directly to the configured database (`.env` / environment: SQLite or PostgreSQL), so the server doesn't need to be running and no invite code is needed. For scripts, read the password from stdin:
+
+```bash
+printf '%s\n' "$PASSWORD" | oauth-rs create-user --email user@example.com --username user --password-stdin
+```
+
+Exit codes: `0` created, `1` failed (e.g. email or username already taken), `2` invalid arguments. Run `oauth-rs help` for usage.
+
 ## Environment variables
 
 Copy `.env.example` to `.env` and set:

@@ -1,3 +1,4 @@
+mod cli;
 mod core;
 mod libs;
 
@@ -12,6 +13,12 @@ pub const APP_ENV: &str = "dev";
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.is_empty() {
+        std::process::exit(cli::run(&args).await);
+    }
+
     tracing_subscriber::fmt::init();
 
     tracing::info!("Starting {} in {} mode", APP_NAME, APP_ENV);
